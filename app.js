@@ -1,84 +1,58 @@
 const express = require("express");
 const cors = require("cors");
-const stripe = require("stripe")(process.env.STRIPE_KEY);
-const axios = require("axios");
+const Stripe = require("stripe");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// SHIPPING
-app.post("/shipping", async (req, res) => {
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+
+// Shipping logic
+function getShipping(price) {
+  if (price >= 50) return 0;
+  return 5;
+}
+
+app.post("/checkout", async (req, res) => {
   try {
-    const { pincode } = req.body;
+    const { name, price } = req.body;
 
-    const shipment = await axios.post(
-      "https://api.easypost.com/v2/shipments",
-      {
-        shipment: {
-          to_address: {
-            zip: pincode,
-            country: "US"
+    const shipping = getShipping(price);
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      mode: "payment",
+
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: { name },
+            unit_amount: Math.round(price * 100)
           },
-          from_address: {
-            zip: "35244",
-            country: "US"
+          quantity: 1
+        },
+        {
+          price_data: {
+            currency: "usd",
+            product_data: { name: "Shipping" },
+            unit_amount: shipping * 100
           },
-          parcel: {
-            length: 10,
-            width: 8,
-            height: 2,
-            weight: 300
-          }
+          quantity: 1
         }
-      },
-      {
-        auth: {
-          username: process.env.EASYPOST_KEY,
-          password: ""
-        }
-      }
-    );
+      ],
 
-    const cheapest = shipment.data.rates.sort((a,b)=>a.rate-b.rate)[0];
+      success_url: "https://faceeternity.org/success",
+      cancel_url: "https://faceeternity.org/cancel"
+    });
 
-    res.json({ amount: parseFloat(cheapest.rate) });
+    res.json({ url: session.url });
 
-  } catch (e) {
-    res.status(500).send("Shipping error");
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Error creating checkout");
   }
 });
 
-// STRIPE
-app.post("/checkout", async (req, res) => {
-  const { cart, shipping } = req.body;
-
-  const session = await stripe.checkout.sessions.create({
-    payment_method_types: ["card"],
-    line_items: [
-      ...cart.map(item => ({
-        price_data: {
-          currency: "usd",
-          product_data: { name: item.name },
-          unit_amount: item.price * 100
-        },
-        quantity: 1
-      })),
-      {
-        price_data: {
-          currency: "usd",
-          product_data: { name: "Shipping" },
-          unit_amount: shipping * 100
-        },
-        quantity: 1
-      }
-    ],
-    mode: "payment",
-    success_url: "https://yourwebsite.com/success",
-    cancel_url: "https://yourwebsite.com/cancel"
-  });
-
-  res.json({ url: session.url });
-});
-
-app.listen(3000, () => console.log("running"));
+app.listen(3000, () => console.log("Server running"));
